@@ -3,7 +3,8 @@
 The YouGame desktop app runs games that anyone can make: remixes, ROM hacks, mods, community
 builds. None of them carry a code signature, so the app doesn't trust them. On Windows it runs them
 inside an operating-system sandbox instead, so a malicious game can't reach the player's files,
-accounts or computer. macOS and Linux aren't there yet (see the table).
+accounts or computer. On macOS that's true for YG Dolphin on the public beta so far, and Linux isn't
+there yet (see the table).
 
 This repo is that sandbox, published so anyone can check it and try to break it. If you find a way
 out, please report it privately: see
@@ -15,11 +16,11 @@ out, please report it privately: see
 | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------- | ------------------------ |
 | Emulators in the app's window, incl. ROM hacks and disc games | Sandboxed, no network                                     | **Not yet** (planned: `sandbox-exec`)  | Not yet                  |
 | Native game builds, from any creator                          | Sandboxed; online unless YouGame turned it off             | Staff-only and signed until then       | Staff-only               |
-| YG Dolphin, our Dolphin fork, and the mods that run on it           | **Not yet.** Next, through this launcher                  | Not yet                                | Not yet                  |
+| YG Dolphin, our Dolphin fork, and the mods that run on it | Every mod is sandboxed (this launcher): internet only, no home network. YG Dolphin without a mod: sandboxed on the public beta, next in the released app | Sandboxed on the public beta (`sandbox-exec`, deny by default; it can't block the home network). Not yet in the released app | Not yet |
 | Browser games                                                 | Chromium's renderer sandbox                               | Chromium's renderer sandbox            | Chromium's renderer sandbox |
 
 Mods built by other players will only run on other players' machines once YG Dolphin runs sandboxed on
-both Windows and macOS. [docs/ORCA_MODS.md](docs/ORCA_MODS.md) explains why, and what else stands
+both Windows and macOS. On the public beta it now does; the released app's macOS sandbox comes next. [docs/ORCA_MODS.md](docs/ORCA_MODS.md) explains why, and what else stands
 between a mod and the player's computer.
 
 ## What it stops, and what it doesn't

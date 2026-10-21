@@ -38,7 +38,7 @@ is a boundary, but not one to rely on alone.
 | PNG re-encoding                                              | Textures are decoded and re-encoded at publish, so YG Dolphin never parses an image a mod supplied                                                                                                         | Designed                                            |
 | Luau VM                                                      | Scripts get emulated memory and nothing else                                                                                                                                                         | Designed                                            |
 | Emulator features a mod doesn't need, off | Bluetooth passthrough, WiiLink, Skylanders, Infinity and microphone devices and EXI devices are off, so less of Dolphin is reachable | Mostly in YG Dolphin today; USB passthrough next |
-| **OS sandbox around YG Dolphin**                                   | If a mod does break out of the emulator, it lands in a process that can't read the player's files, start programs or persist ([this repo](../README.md))                                             | **Planned. The guarantee everything else rests on** |
+| **OS sandbox around YG Dolphin**                                   | If a mod does break out of the emulator, it lands in a process that can't read the player's files, start programs or persist ([this repo](../README.md))                                             | **On the public beta for Windows and macOS. In the released app, on Windows for every mod. Linux not yet. The guarantee everything else rests on** |
 | Checks before a build runs anywhere but its author's machine | Automated rules, a trace of which hardware and system calls the mod touches compared with the base game, and an agent review. The detection rules stay private; they are a filter, not the guarantee | Planned                                             |
 | A kill switch per mod version                                | Pulling a bad version stops it everywhere within minutes                                                                                                                                             | Planned                                             |
 | Fuzzing Dolphin                                              | Millions of hostile inputs aimed at the code a mod controls, with fixes sent to upstream Dolphin                                                                                                     | Planned                                             |
@@ -46,6 +46,9 @@ is a boundary, but not one to rely on alone.
 
 **The rule until the sandbox ships:** a mod built by someone else runs only on its author's
 machine until YG Dolphin runs inside the OS sandbox on both Windows and macOS.
+
+Where that stands (October 2026): YG Dolphin runs inside the OS sandbox on Windows and macOS on the public beta,
+so the rule is met there. The released app sandboxes every mod on Windows, and its macOS sandbox comes next.
 
 ## What stays open
 
