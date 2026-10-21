@@ -1,0 +1,19 @@
+{
+  "name": "yougame-sandbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The OS sandbox the YouGame desktop app runs games, emulators and mods in.",
+  "license": "AGPL-3.0-or-later",
+  "repository": "https://github.com/yougame-co/yougame-sandbox",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "tsc -p . && node --test tests/sandbox-policy.test.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
