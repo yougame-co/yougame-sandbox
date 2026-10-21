@@ -152,6 +152,7 @@ for (const [a, want, detailRe, control] of attempts) {
     continue;
   }
   if (want && got.verdict !== want) failures.push(`${k}: ${got.verdict} in the sandbox, expected ${want} (${got.detail})`);
+  if (want === "denied" && /^(connect|udp|stun) /.test(k) && !/\berror 10013\b/.test(got.detail)) failures.push(`${k}: denial needs WSAEACCES (10013), got ${got.detail}`);
   if (detailRe && !detailRe.test(got.detail)) failures.push(`${k}: ${got.detail}`);
   if (control && ctlGot?.verdict !== "allowed") failures.push(`${k}: the control run outside the sandbox was ${ctlGot?.verdict ?? "missing"} (${ctlGot?.detail ?? ""}), so the test proves nothing`);
 }

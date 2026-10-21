@@ -12,6 +12,7 @@ const {
   launcherEnv,
 } = require("../dist/sandbox-policy.js");
 const { isSaveOf } = require("../dist/save-files.js");
+const { nativeSandbox, DEFAULT_LAUNCH_SPEC } = require("../dist/native-launch.js");
 
 test("one AppContainer profile per game copy, always a valid profile name", () => {
   const a = sandboxProfile("super-mario-64-usa");
@@ -74,6 +75,7 @@ test("the launcher's command line carries every grant, then the program after --
   assert.deepEqual(values("--read"), ["C:\\rom.nes"]);
   assert.deepEqual(values("--write"), ["C:\\saves\\a"]);
   assert.deepEqual(values("--net"), ["none"]);
+  assert.deepEqual(values("--parent-pid"), [String(process.pid)]);
   assert.deepEqual(values("--max-memory"), ["4096"]);
   assert.deepEqual(values("--cwd"), ["C:\\saves\\a"]);
   assert.deepEqual(values("--env"), ["SDL_JOYSTICK_WGI=1"]);
@@ -102,6 +104,22 @@ test("only the app decides to run without the sandbox, and says why", () => {
   }
   // Other values of the variable do not switch it off.
   assert.equal(sandboxDecision({ platform: "win32", launcher, env: { YOUGAME_SANDBOX: "0" } }).sandboxed, true);
+});
+
+test("every sandbox caller passes the current main process PID exactly once before the program", async (t) => {
+  const specs = {
+    native: nativeSandbox({ gameId: "g", build: "b", data: "d", disc: null, spec: DEFAULT_LAUNCH_SPEC, env: {} }),
+    emulator: embedSandbox({ name: "g", hostDir: "h", coresDir: "c", rom: "r", saves: "s", system: "y", parent: "42" }),
+  };
+  for (const [name, spec] of Object.entries(specs)) {
+    await t.test(name, () => {
+      const args = sandboxArgs(spec, "program.exe", ["game-arg"]);
+      assert.equal(args.filter((arg) => arg === "--parent-pid").length, 1);
+      assert.deepEqual(args.slice(6, 8), ["--parent-pid", String(process.pid)]);
+      assert.ok(args.indexOf("--parent-pid") < args.indexOf("--"));
+      assert.deepEqual(args.slice(args.indexOf("--")), ["--", "program.exe", "game-arg"]);
+    });
+  }
 });
 
 test("how a sandboxed launch ended: ran, cannot exist here (run without, logged), or failed (refuse)", () => {
@@ -157,4 +175,40 @@ test("the launcher gets only what Windows needs, never the app's secrets", () =>
   for (const k of ["CLOUDFLARE_API_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "USERPROFILE", "APPDATA"]) assert.equal(env[k], undefined, k);
   // Names are matched without regard to case, as Windows does.
   assert.equal(launcherEnv({ systemroot: "D:\\Win" }).SystemRoot, "D:\\Win");
+});
+
+
+test("reserved LAN requests stay disabled; experimental UI modes are explicit", () => {
+  const spec = { profile: "YouGame.Test", runtime: [], read: [], write: [], net: "internet", lan: true };
+  const args = sandboxArgs(spec, "probe.exe", []);
+  assert.ok(!args.includes("--net-lan"));
+  assert.ok(!args.includes("--ui-handles"));
+  assert.ok(!args.includes("--isolated-ui"));
+  const strict = sandboxArgs({ ...spec, uiHandles: true, isolatedUi: true }, "probe.exe", []);
+  assert.ok(strict.includes("--ui-handles"));
+  assert.ok(strict.includes("--isolated-ui"));
+  assert.ok(strict.indexOf("--ui-handles") < strict.indexOf("--"));
+  assert.ok(strict.indexOf("--isolated-ui") < strict.indexOf("--"));
+});
+
+test("only a native spec's explicit children opt-in raises the process ceiling", () => {
+  const native = (spec) => nativeSandbox({ gameId: "steam-probe", build: "b", data: "d", disc: null, base: "steam-game", spec, env: {} });
+  for (const children of [1, 2]) {
+    const sb = native({ ...DEFAULT_LAUNCH_SPEC, children });
+    assert.equal(sb.children, children);
+    const args = sandboxArgs(sb, "probe.exe", []);
+    assert.equal(args.filter((arg) => arg === "--child-processes").length, 1);
+    assert.equal(args[args.indexOf("--child-processes") + 1], String(children));
+    assert.ok(args.indexOf("--child-processes") < args.indexOf("--"));
+  }
+  const specs = {
+    nativeDefault: native(DEFAULT_LAUNCH_SPEC),
+    core: embedSandbox({ name: "core", hostDir: "h", coresDir: "c", rom: "r", saves: "s", system: "y" }),
+  };
+  for (const [name, sb] of Object.entries(specs)) {
+    assert.equal(sb.children, undefined, name);
+    assert.ok(!sandboxArgs(sb, "program.exe", []).includes("--child-processes"), name);
+  }
+  for (const children of [null, false, true, "1", 0, -1, 3, 1.5])
+    assert.throws(() => sandboxArgs({ ...specs.nativeDefault, children }, "probe.exe", []), /children must be an integer from 1 to 2/);
 });

@@ -68,18 +68,40 @@ The sandbox lowers the odds and the blast radius; it does not make a malicious g
   phase 2), never `privateNetworkClientServer`. AppContainers cannot reach loopback at all without
   an administrator's exemption, which the app never asks for.
 - **Job object**: `KILL_ON_JOB_CLOSE` (the program dies with the launcher, which the app kills when
-  a game will not quit), no breakaway, one active process, `DIE_ON_UNHANDLED_EXCEPTION`, a memory
+  a game will not quit), no breakaway, one active process by default, `DIE_ON_UNHANDLED_EXCEPTION`, a memory
   limit (4 GB for the emulator), and UI limits that cost a game nothing: no clipboard read or write,
   no desktop switching, no display-settings changes, no system-parameter changes, no global atoms,
   no logoff.
 - **Process attributes**: `PROCESS_CREATION_CHILD_PROCESS_RESTRICTED` (no child processes, enforced
-  by the kernel, not just the job), an explicit inherited-handle list (stdin, stdout, stderr only),
+  by the kernel, not just the job, except for the explicit helper opt-in below), an explicit
+  inherited-handle list (stdin, stdout, stderr only),
   and mitigations: no extension points (AppInit DLLs, legacy hooks), no images from remote shares
   or with a low integrity label (so a DLL the game wrote cannot be loaded), no non-system fonts,
   bottom-up ASLR, terminate on heap corruption, System32 first when a DLL is found by name.
   Deliberately not set: dynamic-code prohibition (the N64 dynarec writes code), win32k lockdown
   (OpenGL needs it), Microsoft-signed-only images (cores are unsigned), `UILIMIT_HANDLES` (the
   window lives inside the app's).
+- **Native helper opt-in**: a launch spec may set `"children": 1` or `2` only when the app
+  advertises the exact `YouGameSteamBase/1` capability and the spec includes a Steam `base`
+  (`children needs base` otherwise). Other native games retain the one-process sandbox. The desktop
+  translates it to `--child-processes N`: the job permits `1 + N` simultaneous processes and the
+  launcher omits the kernel child-process restriction. Without it both barriers stay in place.
+  Helpers and their descendants inherit the same AppContainer token and job; the ceiling is
+  shared by all descendants, and a vacated slot can be reused. `KILL_ON_JOB_CLOSE`, the existing
+  per-process memory limit, UI restrictions and image-load mitigations stay in place.
+  `BREAKAWAY_OK` and `SILENT_BREAKAWAY_OK` remain unset.
+  Executable access follows the existing folder grants: the build folder and the `--exec` grant
+  on the exact Steam game folder, so a child can start that game's own executable. This is not an
+  executable-name allowlist: Windows/system locations already executable by the container remain
+  accessible. With this option, every write grant (including data and granted Documents folders)
+  gets read/write/delete rights without `FILE_EXECUTE`; an existing per-profile executable write
+  ACE is replaced, and inherited execute or storage without ACLs fails closed. A game cannot start
+  an executable it writes there. Without the option the historical write masks are unchanged.
+  Low-label images remain blocked by the image-load mitigation. The option grants no new file or network access: the
+  Steam game stays read-only, and writes stay within the listing's data/profile folders and
+  container storage. YG Dolphin, packs and emulator cores never request helpers. `--links-helper`
+  launches reject the option before creating a profile or granting access;
+  the direct-links helper's own check still requires `ActiveProcessLimit == 1` and no breakaway.
 - **A minimal environment**: the system's own variables, `TEMP`/`APPDATA`/`USERPROFILE` pointed into
   the container's own folder (`%LOCALAPPDATA%\Packages\<profile>\AC`), nothing of the app's.
 - **Transport**: inherited pipes or handles only. Loopback HTTP (the native SDK bridge and the
@@ -303,11 +325,25 @@ settings takes part in it.
   it, minutes at times, and the probe is a new Orca's first launch) answers nothing: never relaxed
   for it, not kept, that run plays strict and the next Play asks again. Never by a player's run: one that ends before its first line is refused, not tried again
   relaxed, so a crafted disc or setting cannot pick the relaxed profile. The manifest may still
-  choose a profile. The app reads Orca's memory (`footprint`) and stops it past 6 GB. Not on by
-  default yet (`MAC_SANDBOX_ROLLED_OUT`): the support file or the manifest turns it on for
-  testers. Known gaps: the window server's global key and idle state, UDP to IPv4-mapped loopback
-  (`::ffff:127.0.0.1`), and Metal's own shader cache (`$(getconf DARWIN_USER_CACHE_DIR)co.yougame.orca`),
-  which a jailed Orca writes and an unjailed one reads (to settle in M3's trace).
+  choose a profile. The app reads Orca's memory (`footprint`) and stops it past 6 GB. Off until its
+  rollout, the manifest's `sandboxSwitch.mac.rollout: "on"` (off by default; not remembered past
+  the manifest, so `"off"` turns it back off); the support file or a dated `mac.mode` turns it on
+  for testers before that. The two folders the jail writes (its user folder and Metal's cache)
+  must each be a folder itself, not a link, or the run is refused.
+  **Metal's own shader cache** (`$(getconf DARWIN_USER_CACHE_DIR)co.yougame.orca`, one folder per
+  bundle id) holds one side at a time (`src/orca-metal-cache.ts`): while a jailed Orca or the probe
+  runs, the jailed side's copy is moved in and the unjailed side's waits beside it
+  (`co.yougame.orca.yg-open`); when the last jailed Orca ends the jailed side goes back beside it
+  (`co.yougame.orca.yg-jailed`). Which side the folder holds is in `orca/metal-cache.json`
+  (missing or damaged counts as jailed), so a crash is put right at the next Play. A jailed and an
+  unjailed Orca never run at once on a Mac (`sandbox_busy`), and an unjailed Orca does not start
+  while the jailed side can be neither moved nor deleted.
+  **Privacy grants:** macOS counts Orca as YouGame, so a jailed Orca shares YouGame's grants.
+  Each jailed Play logs which ones YouGame holds, asked without a prompt (`src/orca-mac-tcc.ts`:
+  `getMediaAccessStatus`, `isTrustedAccessibilityClient(false)`; never a request, never a setting).
+  The line also names any grant the profile has no rule of its own for.
+  Known gaps: the window server's global key and idle state, and UDP to IPv4-mapped loopback
+  (`::ffff:127.0.0.1`).
 - **Jailed and unjailed runs never share a user folder.** Unjailed runs keep `orca/user`; jailed
   runs use `orca/user-jailed`, made at the first jailed Play from a copy of `orca/user` (folders
   and plain files only: no links, no caches or logs) and never copied back. So nothing a

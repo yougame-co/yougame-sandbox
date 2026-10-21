@@ -5,6 +5,7 @@
 //
 //   read=PATH  write=PATH  list=DIR  connect=HOST:PORT  spawn=PROGRAM  regwrite=HKCU\KEY
 //   clipboard  screen  keys=MS  openprocess=PID  alloc=MB  token
+//   udpself         one loopback self-datagram (the direct-link wake-up pattern)
 //   udp=HOST:PORT    a datagram out (denied: the sandbox refused the send)
 //   stun=HOST:PORT   a STUN binding request and its reply (UDP out and back in, as a direct link needs)
 //   plantdll=PATH    copies System32's version.dll to PATH, then loads it: a program that writes its
@@ -17,6 +18,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -61,8 +63,9 @@ static void tryList(const std::string &dir) {
 static void tryConnect(const std::string &hostPort) {
   size_t colon = hostPort.rfind(':');
   std::string host = hostPort.substr(0, colon), port = hostPort.substr(colon + 1);
+  if (host.size() >= 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
   addrinfo hints{}, *res = nullptr;
-  hints.ai_family = AF_INET;
+  hints.ai_family = host.find(':') == std::string::npos ? AF_INET : AF_INET6;
   hints.ai_socktype = SOCK_STREAM;
   if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res) return report("connect " + hostPort, false, "resolve " + err(WSAGetLastError()));
   SOCKET s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -84,12 +87,12 @@ static void tryConnect(const std::string &hostPort) {
     FD_SET(s, &x);
     timeval tv{3, 0};
     int sel = select(0, nullptr, &w, &x, &tv);
-    if (sel > 0 && FD_ISSET(s, &w)) ok = true;
-    else if (sel == 0) e = WSAETIMEDOUT;
+    if (sel == 0) e = WSAETIMEDOUT;
+    else if (sel == SOCKET_ERROR) e = WSAGetLastError();
     else {
       int so = 0, len = sizeof so;
-      getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&so, &len);
-      e = so;
+      if (getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&so), &len) == SOCKET_ERROR) e = WSAGetLastError();
+      else { e = so; ok = so == 0; }
     }
   }
   closesocket(s);
@@ -114,16 +117,64 @@ static void tryDns(const std::string &host) {
 static bool resolveUdp(const std::string &hostPort, addrinfo **res) {
   size_t colon = hostPort.rfind(':');
   if (colon == std::string::npos) return false;
+  std::string host = hostPort.substr(0, colon);
+  if (host.size() >= 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
   addrinfo hints{};
-  hints.ai_family = AF_INET;
+  hints.ai_family = host.find(':') == std::string::npos ? AF_INET : AF_INET6;
   hints.ai_socktype = SOCK_DGRAM;
-  return getaddrinfo(hostPort.substr(0, colon).c_str(), hostPort.substr(colon + 1).c_str(), &hints, res) == 0 && *res;
+  return getaddrinfo(host.c_str(), hostPort.substr(colon + 1).c_str(), &hints, res) == 0 && *res;
+}
+
+// No interprocess loopback exemption: this socket sends only to itself.
+static void tryUdpSelf() {
+  SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (socketHandle == INVALID_SOCKET) return report("udpself", false, err(WSAGetLastError()));
+  sockaddr_in local{};
+  local.sin_family = AF_INET;
+  local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  bool ok = bind(socketHandle, reinterpret_cast<sockaddr *>(&local), sizeof local) == 0;
+  int error = ok ? 0 : WSAGetLastError();
+  int size = sizeof local;
+  if (ok && getsockname(socketHandle, reinterpret_cast<sockaddr *>(&local), &size) == SOCKET_ERROR) {
+    ok = false; error = WSAGetLastError();
+  }
+  if (ok && sendto(socketHandle, "x", 1, 0, reinterpret_cast<const sockaddr *>(&local), sizeof local) != 1) {
+    ok = false; error = WSAGetLastError();
+  }
+  if (ok) {
+    fd_set ready;
+    FD_ZERO(&ready); FD_SET(socketHandle, &ready);
+    timeval timeout{3, 0};
+    const int selected = select(0, &ready, nullptr, nullptr, &timeout);
+    if (selected <= 0) { ok = false; error = selected == 0 ? WSAETIMEDOUT : WSAGetLastError(); }
+    else {
+      char byte = 0;
+      ok = recv(socketHandle, &byte, 1, 0) == 1 && byte == 'x';
+      if (!ok) error = WSAGetLastError();
+    }
+  }
+  closesocket(socketHandle);
+  report("udpself", ok, ok ? "self-datagram received" : err(static_cast<DWORD>(error)));
 }
 
 static void tryUdp(const std::string &hostPort) {
   addrinfo *res = nullptr;
   if (!resolveUdp(hostPort, &res)) return report("udp " + hostPort, false, "resolve " + err(WSAGetLastError()));
   SOCKET s = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP);
+  if (s == INVALID_SOCKET) {
+    const int error = WSAGetLastError();
+    freeaddrinfo(res);
+    return report("udp " + hostPort, false, "socket setup " + std::to_string(error));
+  }
+  // Broadcast must be enabled so its denial measures the guard, not the socket default.
+  const BOOL broadcast = TRUE;
+  if (res->ai_family == AF_INET && setsockopt(s, SOL_SOCKET, SO_BROADCAST,
+      reinterpret_cast<const char *>(&broadcast), sizeof broadcast) == SOCKET_ERROR) {
+    const int error = WSAGetLastError();
+    closesocket(s);
+    freeaddrinfo(res);
+    return report("udp " + hostPort, false, "broadcast setup " + std::to_string(error));
+  }
   int n = sendto(s, "x", 1, 0, res->ai_addr, (int)res->ai_addrlen);
   int e = n == 1 ? 0 : WSAGetLastError();
   closesocket(s);
@@ -298,18 +349,25 @@ static void tryTopmost() {
     while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&m);
     Sleep(10);
   }
-  const bool shown = IsWindowVisible(w) && (GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TOPMOST);
+  // A window on a noninteractive station can have WS_EX_TOPMOST but cannot cover the user's
+  // desktop. Keep that distinction explicit rather than treating creation as screen influence.
+  USEROBJECTFLAGS flags{};
+  const bool visibleStation = GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS, &flags, sizeof flags, nullptr) && (flags.dwFlags & WSF_VISIBLE);
+  const bool local = IsWindowVisible(w) && (GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TOPMOST);
+  const bool shown = local && visibleStation;
+  report("ownwindow", local, local ? "own window works" : "own window failed");
   DestroyWindow(w);
-  report("topmost", shown, shown ? "a topmost window was shown" : "not shown topmost");
+  report("topmost", shown, shown ? "a topmost window was shown" : "not topmost on the interactive station");
 }
 
 // The title of another process's window (the test's hidden decoy, decoywin): read, or not.
 static std::wstring g_title;
 static bool g_found = false;
+static DWORD g_decoyPid = 0;
 static BOOL CALLBACK findTitle(HWND h, LPARAM) {
   DWORD pid = 0;
   GetWindowThreadProcessId(h, &pid);
-  if (pid == GetCurrentProcessId()) return TRUE;
+  if (pid != g_decoyPid) return TRUE;
   wchar_t buf[256];
   if (GetWindowTextW(h, buf, 256) && g_title == buf) {
     g_found = true;
@@ -318,19 +376,23 @@ static BOOL CALLBACK findTitle(HWND h, LPARAM) {
   return TRUE;
 }
 static void tryWinTitle(const std::string &title) {
-  g_title.assign(title.begin(), title.end());
+  // PID plus title: the outside control must read only the fixture window, never other titles.
+  size_t colon = title.find(':');
+  if (colon == std::string::npos) return report("wintitle " + title, false, "needs decoy PID:title");
+  g_decoyPid = static_cast<DWORD>(std::strtoul(title.substr(0, colon).c_str(), nullptr, 10));
+  g_title.assign(title.begin() + static_cast<std::string::difference_type>(colon + 1), title.end());
   g_found = false;
   EnumWindows(findTitle, 0);
   report("wintitle " + title, g_found, g_found ? "read another process's window title" : "not found");
 }
 
-// A hidden window titled `title` held for 60 s (the decoy wintitle looks for; run outside the sandbox).
+// A hidden window titled `title` held for 600 s (the decoy wintitle looks for; run outside the sandbox).
 static void holdDecoy(const std::string &title) {
   std::wstring t(title.begin(), title.end());
   HWND w = CreateWindowExW(0, L"STATIC", t.c_str(), WS_OVERLAPPED, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
   report("decoywin", w != nullptr, w ? "holding" : err(GetLastError()));
   std::fflush(stdout);
-  ULONGLONG end = GetTickCount64() + 60000;
+  ULONGLONG end = GetTickCount64() + 600000;
   while (w && GetTickCount64() < end) {
     MSG m;
     while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&m);
@@ -358,7 +420,27 @@ int main(int argc, char **argv) {
     else if (a == "keys") tryKeys(std::atoi(v.c_str()));
     else if (a == "openprocess") tryOpenProcess((DWORD)std::strtoul(v.c_str(), nullptr, 10));
     else if (a == "token") tryToken();
+    else if (a == "open") {
+      std::wstring target(v.begin(), v.end());
+      SHELLEXECUTEINFOW request{};
+      request.cbSize = sizeof request;
+      // Deliberately omit SEE_MASK_FLAG_NO_UI: exercise inherited OS error handling and station
+      // isolation, not a cooperative caller. The PC operator must also check for external UI.
+      request.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+      request.lpVerb = L"open";
+      request.lpFile = target.c_str();
+      request.nShow = SW_SHOWNORMAL;
+      BOOL ok = ShellExecuteExW(&request);
+      DWORD error = ok ? 0 : GetLastError();
+      if (request.hProcess) CloseHandle(request.hProcess);
+      report("open " + v, ok != 0, ok ? "opened" : err(error));
+    }
+    else if (a == "errormode") {
+      const UINT want = SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
+      report("errormode", (GetErrorMode() & want) == want, "inherited OS error mode");
+    }
     else if (a == "alloc") tryAlloc(std::atoi(v.c_str()));
+    else if (a == "udpself") tryUdpSelf();
     else if (a == "udp") tryUdp(v);
     else if (a == "stun") tryStun(v);
     else if (a == "plantdll") tryPlantDll(v);

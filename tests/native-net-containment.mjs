@@ -1,13 +1,14 @@
-// Windows only: a native build reaches the network only when YouGame approved its game.
+// Windows only: a native build is online unless its game is blocked; test builds run offline.
 //
 //   node tests/native-net-containment.mjs     (after npm run build and native:build)
 //
 // Runs sandbox-probe.exe as a native build through the real launcher, with the grants launchPlan
-// and nativeSandbox give it (dist/native-launch.js), first for a game not approved to go online,
-// then for an approved one. Not approved: a TCP connection and the lookup of a name that exists
-// must both fail. Approved: both must work.
+// and nativeSandbox give it (dist/native-launch.js): blocked, online with net "internet", online
+// with net "yougame", and a crowd-coding test build. Only online with net "internet" may connect
+// over TCP and look up a name. With net "yougame", the app opens YouGame connections for the build,
+// while the build itself gets --net none.
 // The sandbox cannot stop screen capture, so the network is what stands between a build and
-// sending out the player's screen (docs/DESKTOP_SANDBOX.md, "Online only for approved games").
+// sending out the player's screen (docs/DESKTOP_SANDBOX.md).
 // Prints NATIVE NET OK and exits 0, or each failed expectation and exits 1.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -70,35 +71,52 @@ const parse = (out) => {
 };
 
 const failures = [];
-for (const internet of [false, true]) {
-  // The default spec asks for the internet, as most games do; launchPlan decides whether it gets it.
+const cases = [
+  { name: "blocked game", id: "blocked", internet: false, net: "internet", branch: false, want: "denied" },
+  { name: 'online game, net "internet"', id: "internet", internet: true, net: "internet", branch: false, want: "allowed" },
+  { name: 'online game, net "yougame"', id: "yougame", internet: true, net: "yougame", branch: false, want: "denied" },
+  { name: 'crowd-coding test build, net "internet"', id: "branch", internet: true, net: "internet", branch: true, want: "denied" },
+];
+for (const c of cases) {
   const plan = launchPlan({
     platform: "windows",
     sandboxed: true,
     testing: false,
-    spec: null,
-    internet,
+    spec: { ...DEFAULT_LAUNCH_SPEC, net: c.net },
+    internet: c.internet,
+    branch: c.branch,
   });
+  if (plan.error || !plan.spec) {
+    failures.push(`${c.name}: ${plan.error ?? "no launch spec"}`);
+    console.log(`-- ${c.name}: no launch plan`);
+    continue;
+  }
   const spec = nativeSandbox({
-    gameId: `native-net-${internet ? "approved" : "offline"}`,
+    gameId: `native-net-${c.id}`,
     build,
     data,
     disc: null,
     spec: plan.spec,
     env: {},
   });
-  const got = parse((await run(sandboxArgs(spec, probe, attempts))).out);
-  const want = internet ? "allowed" : "denied";
-  console.log(`-- ${internet ? "approved" : "not approved"} (net ${spec.net})`);
+  const args = sandboxArgs(spec, probe, attempts);
+  const net = args[args.indexOf("--net") + 1];
+  const wantNet = c.want === "allowed" ? "internet" : "none";
+  if (!args.includes("--net") || net !== wantNet)
+    failures.push(`${c.name}: launch args should contain --net ${wantNet}`);
+  const { code, out } = await run(args);
+  const got = parse(out);
+  if (code !== 0) failures.push(`${c.name}: launcher exited ${code}`);
   const token = got.get("token");
   if (!token || !/appcontainer=yes/.test(token.detail))
-    failures.push(`${internet}: not in an AppContainer (${token?.detail ?? "no answer"})`);
-  for (const k of ["connect 1.1.1.1:443", "dns one.one.one.one"]) {
+    failures.push(`${c.name}: not in an AppContainer (${token?.detail ?? "no answer"})`);
+  const checks = ["connect 1.1.1.1:443", "dns one.one.one.one"];
+  console.log(`-- ${c.name} (--net ${net}): ${checks.map((k) => `${k}: ${got.get(k)?.verdict ?? "no answer"}`).join(", ")}`);
+  for (const k of checks) {
     const r = got.get(k);
-    console.log(`  ${k}: ${r ? `${r.verdict} ${r.detail}` : "no answer"}`);
-    if (!r || r.verdict !== want)
+    if (!r || r.verdict !== c.want)
       failures.push(
-        `${internet ? "approved" : "not approved"}: ${k} should be ${want}, was ${r ? `${r.verdict} ${r.detail}` : "no answer"}`,
+        `${c.name}: ${k} should be ${c.want}, was ${r ? `${r.verdict} ${r.detail}` : "no answer"}`,
       );
   }
 }

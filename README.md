@@ -41,7 +41,10 @@ doesn't), so a driver or kernel bug is a way out.
 | Path                          | What it is                                                                                   |
 | ----------------------------- | -------------------------------------------------------------------------------------------- |
 | `native/sandbox/launcher.cpp` | `yougame-sandbox.exe`: starts one program inside an AppContainer and a job object              |
+| `native/sandbox/network.hpp`  | The home-network guard: Windows Filtering Platform rules, installed once with the player's OK, that block one sandbox profile from private and local addresses (for mods) |
 | `native/sandbox/probe.cpp`    | A stand-in for a compromised game, for the containment test. Never shipped                   |
+| `native/sandbox/steam-probe.c`, `test-fixtures/` | A stand-in game for the Steam helper opt-in test, and its fake Steam folder. Never shipped |
+| `native/tests/`               | The launcher's own Windows tests (CTest): window adoption and the helper-process ceiling     |
 | `src/sandbox-policy.ts`       | What the app asks the launcher for on each launch                                            |
 | `src/native-launch.ts`        | How a native build is launched: its launch file, the default, and the internet approval     |
 | `src/save-files.ts`           | The save files a game copy owns, which is what the sandbox lets an emulator write            |

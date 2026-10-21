@@ -4,11 +4,14 @@
 // app runs a game without the sandbox. Windows only so far: native/sandbox/launcher.cpp
 // (yougame-sandbox.exe) does the AppContainer + job object work; this decides what to ask for.
 import { createHash } from "node:crypto";
+import { LAN_IN_JAIL } from "./jail-network";
 
 /** yougame-sandbox's exit code when it could not set the sandbox up here (a grant, the job) and nothing ran. */
 export const SANDBOX_SETUP_FAILED = 120;
 /** yougame-sandbox's exit code when this Windows cannot make an AppContainer at all and nothing ran. */
 export const SANDBOX_UNSUPPORTED = 121;
+/** The required profile-specific home-network guard is missing; nothing ran. */
+export const SANDBOX_NET_GUARD_MISSING = 123;
 /** The line the launcher writes to stderr once the program runs inside the sandbox. */
 export const SANDBOX_RUNNING = /^sandbox: running pid (\d+) in AppContainer (\S+)/m;
 /** The line the launcher writes to stderr once the program is gone: its exit code (unsigned) and the job's peak memory. */
@@ -40,11 +43,14 @@ export type SandboxSpec = {
    * (`internet-server`: internetClientServer). Never loopback.
    */
   net: "none" | "internet" | "internet-server";
-  /**
-   * The LAN as well (privateNetworkClientServer). Without it a Private-profile network's LAN is
-   * out of reach; a Public-profile one lets an internet program reach it anyway (Windows' rule).
-   */
+  /** Reserved for a future LAN rollout; hard-disabled by LAN_IN_JAIL. */
   lan?: boolean;
+  /** Orca mods only: require the installed home-network guard before any launch setup. */
+  requireNetGuard?: boolean;
+  /** Experimental USER handle limits; validate embedding on Windows before rollout. */
+  uiHandles?: boolean;
+  /** Test-only noninteractive window station/desktop. Incompatible with embedding. */
+  isolatedUi?: boolean;
   /**
    * The program's own DLLs beside it rather than System32's copies (the launcher's --app-dlls: no
    * PREFER_SYSTEM32). Orca ships the d3dcompiler_47 its shader cache is keyed to and the CRT it was
@@ -53,6 +59,8 @@ export type SandboxSpec = {
   appDlls?: boolean;
   /** The job's memory limit for the process, in MB. */
   maxMemoryMb?: number;
+  /** Native launch-spec opt-in only; Dolphin, packs and emulator cores never set this. */
+  children?: 1 | 2;
   cwd?: string;
   /** Variables added to the program's environment (the launcher gives it only the system's own otherwise). */
   env?: Record<string, string>;
@@ -74,9 +82,17 @@ export type SandboxSpec = {
 /** yougame-sandbox's arguments for running `program` with `args` under `spec`. */
 export function sandboxArgs(spec: SandboxSpec, program: string, args: string[]): string[] {
   const out = ["--profile", spec.profile, "--display", spec.display ?? "YouGame game", "--net", spec.net];
-  if (spec.lan) out.push("--net-lan");
+  out.push("--parent-pid", String(process.pid));
+  if (LAN_IN_JAIL && spec.lan) out.push("--net-lan");
+  if (spec.requireNetGuard) out.push("--require-net-guard");
+  if (spec.uiHandles) out.push("--ui-handles");
+  if (spec.isolatedUi) out.push("--isolated-ui");
   if (spec.appDlls) out.push("--app-dlls");
   out.push(...grantArgs(spec));
+  if (spec.children !== undefined) {
+    if (spec.children !== 1 && spec.children !== 2) throw new Error("children must be an integer from 1 to 2");
+    out.push("--child-processes", String(spec.children));
+  }
   if (spec.maxMemoryMb) out.push("--max-memory", String(spec.maxMemoryMb));
   if (spec.cwd) out.push("--cwd", spec.cwd);
   for (const [k, v] of Object.entries(spec.env ?? {})) out.push("--env", `${k}=${v}`);
@@ -117,13 +133,20 @@ export function resetProfileArgs(profile: string): string[] {
  * program is gone, after anything it printed). `exitCode`: that line's code, which differs from
  * the launcher's own exit code only for a program that exited 120 or 121 (the launcher says 122).
  */
-export type LauncherReport = { pid: number | null; exitCode: number | null; peakMb: number | null };
+export type LauncherReport = {
+  pid: number | null;
+  exitCode: number | null;
+  peakMb: number | null;
+  /** Exact read-grant error 5 with the launcher's administrator-owned signature, before spawn. */
+  adminReadGrantDenied?: string | null;
+};
 
 /** Reads the launcher's own lines as they come; feed it every complete stderr line. */
 export class LauncherLines {
   pid: number | null = null;
   exitCode: number | null = null;
   peakMb: number | null = null;
+  adminReadGrantDenied: string | null = null;
   /** The launcher's other lines (a grant it refused, a step that failed), the first few, for the log and the refusal. */
   readonly said: string[] = [];
 
@@ -142,11 +165,17 @@ export class LauncherLines {
       return;
     }
     // Only before the program runs: after that, a "sandbox:" line may be the program's own.
-    if (this.pid === null && this.said.length < 8) this.said.push(line.slice(0, 300));
+    if (this.pid === null) {
+      // Parse before clipping diagnostics: a long disc path must still match in full. No other
+      // grant, ACL-read failure, error code, or child-written line qualifies for the P+ retry.
+      const denied = /^sandbox: cannot grant read on (.+) \(error 5\); install-time capability RX grant is required for administrator-owned files$/.exec(line);
+      if (denied && this.adminReadGrantDenied === null) this.adminReadGrantDenied = denied[1];
+      if (this.said.length < 8) this.said.push(line.slice(0, 300));
+    }
   }
 
   report(): LauncherReport {
-    return { pid: this.pid, exitCode: this.exitCode, peakMb: this.peakMb };
+    return { pid: this.pid, exitCode: this.exitCode, peakMb: this.peakMb, adminReadGrantDenied: this.adminReadGrantDenied };
   }
 }
 
@@ -158,7 +187,7 @@ export class LauncherLines {
  * a GPU driver loaded many times over and still stops a runaway allocation from paging the
  * machine to a halt.
  */
-export function embedSandbox(o: { name: string; hostDir: string; coresDir: string; rom: string | string[]; saves: string; system: string; parent?: string }): SandboxSpec {
+export function embedSandbox(o: { name: string; hostDir: string; coresDir: string; rom: string | string[]; saves: string; system: string; parent?: string; guards?: Record<string, string> }): SandboxSpec {
   return {
     profile: sandboxProfile(o.name),
     runtime: [o.hostDir, o.coresDir],
@@ -169,7 +198,8 @@ export function embedSandbox(o: { name: string; hostDir: string; coresDir: strin
     cwd: o.saves,
     // Controllers: the sandbox cannot open HID devices, so SDL's HIDAPI and raw input backends see
     // nothing; Windows.Gaming.Input is brokered by the system and works inside an AppContainer.
-    env: { SDL_JOYSTICK_WGI: "1" },
+    // An agent's copy: its SDL guards too (native-policy.ts agentSdlGuards).
+    env: { SDL_JOYSTICK_WGI: "1", ...o.guards },
     // SDL3 registers its windows as "SDL_app" (SDL_windowsevents.c SDL_RegisterApp); host.cpp captions its own "yougame-libretro".
     ...(o.parent ? { embed: { parent: o.parent, cls: "SDL_app", title: "yougame-libretro" } } : {}),
   };
