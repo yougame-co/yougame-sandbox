@@ -15,10 +15,10 @@ out, please report it privately: see
 | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------- | ------------------------ |
 | Emulators in the app's window, incl. ROM hacks and disc games | Sandboxed, no network                                     | **Not yet** (planned: `sandbox-exec`)  | Not yet                  |
 | Native game builds, from any creator                          | Sandboxed; online unless YouGame turned it off             | Staff-only and signed until then       | Staff-only               |
-| Orca, our Dolphin fork, and the mods that run on it           | **Not yet.** Next, through this launcher                  | Not yet                                | Not yet                  |
+| YG Dolphin, our Dolphin fork, and the mods that run on it           | **Not yet.** Next, through this launcher                  | Not yet                                | Not yet                  |
 | Browser games                                                 | Chromium's renderer sandbox                               | Chromium's renderer sandbox            | Chromium's renderer sandbox |
 
-Mods built by other players will only run on other players' machines once Orca runs sandboxed on
+Mods built by other players will only run on other players' machines once YG Dolphin runs sandboxed on
 both Windows and macOS. [docs/ORCA_MODS.md](docs/ORCA_MODS.md) explains why, and what else stands
 between a mod and the player's computer.
 
@@ -49,10 +49,10 @@ doesn't), so a driver or kernel bug is a way out.
 | `src/native-launch.ts`        | How a native build is launched: its launch file, the default, and the internet approval     |
 | `src/save-files.ts`           | The save files a game copy owns, which is what the sandbox lets an emulator write            |
 | `tests/`                      | The policy tests (any OS) and the containment test (Windows)                                 |
-| `docs/`                       | The design, the measurements, and the threat model for Orca mods                             |
+| `docs/`                       | The design, the measurements, and the threat model for YG Dolphin mods                             |
 
 The rest of the desktop app is private, including the emulator host that parses the ROM
-(`native/libretro/host.cpp`), the code that starts Orca, and the bridge games talk to the app over.
+(`native/libretro/host.cpp`), the code that starts YG Dolphin, and the bridge games talk to the app over.
 The docs name those files for context. This repo mirrors the parts that decide what a game can
 reach.
 
