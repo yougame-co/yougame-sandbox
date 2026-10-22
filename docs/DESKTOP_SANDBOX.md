@@ -293,52 +293,55 @@ outside the sandbox on everything marked "outside: allowed", so each denial is t
   parent's input queue, so a host that stops pumping messages holds the app's UI. The host's own
   watchdog (10 s without a frame) and the app's kill on stop bound it.
 
-## Orca
+## YG Dolphin (Orca)
+
+YG Dolphin is YouGame's GameCube and Wii engine. Its codename, Orca (`orca`), stays in the file, folder and
+profile names below.
 
 Built on a branch, waiting for Luis (plan: `notes/lead-records/orca-sandbox/plan.md` in the
-brawl-dolphin repo). Only an Orca that says it has a sandbox mode is jailed or put on the stdio
+brawl-dolphin repo). Only a YG Dolphin that says it has a sandbox mode is jailed or put on the stdio
 bridge: its manifest or `orca.json` says `"sandbox": 1`, or its own `Sys/Orca/features.json` does
 (read from the install the app has already checked, so a manifest that lost the field marks nothing
-by mistake). Any other Orca runs as before, on the loopback bridge, now behind the same request
-allowlist. `src/orca-sandbox.ts` makes the one decision; nothing from the page, Orca or the emulator
+by mistake). Any other YG Dolphin runs as before, on the loopback bridge, now behind the same request
+allowlist. `src/orca-sandbox.ts` makes the one decision; nothing from the page, YG Dolphin or the emulator
 settings takes part in it.
 
-- **Windows**: `yougame-sandbox.exe` runs Orca in the `YouGame.Orca` AppContainer and a 6 GB job.
+- **Windows**: `yougame-sandbox.exe` runs YG Dolphin in the `YouGame.Orca` AppContainer and a 6 GB job.
   Grants: its program folder (read + execute) and `orca/files` (read), made with `--grant-only`
   when it is installed or staged (a Play waits for one still under way); the disc file (never its
   folder; a file may sit on a drive root), the listing's run folder (read) and `orca/user-jailed`
   (write), at each launch. Network: `internetClient` and, by default,
   `privateNetworkClientServer` (the LAN; on a Public-profile network Windows allows it anyway),
   both by their fixed SIDs; no `internetClientServer` unless a switch adds it; never loopback.
-  `--app-dlls` keeps Orca's own `d3dcompiler_47` (its shader cache misses otherwise); the other
-  image-load rules stay, so a library Orca writes is never loaded. Orca opens a hidden window
+  `--app-dlls` keeps YG Dolphin's own `d3dcompiler_47` (its shader cache misses otherwise); the other
+  image-load rules stay, so a library YG Dolphin writes is never loaded. YG Dolphin opens a hidden window
   (`--embed-adopted`) at the app's rect, which the launcher makes a child of the app's with its own
   style (`--embed-keep-style`) and stops looking for after 60 s (`--embed-timeout-ms`). The backend
   is pinned to D3D11 inside. No SDL joystick backend runs inside (`SDL_JOYSTICK_WGI=0` too): its
   pads are the app's snapshots.
 - **macOS**: `/usr/bin/sandbox-exec` with the deny-default profile in `src/orca-mac-sandbox.ts`,
   every path a realpath'd `-D` parameter, `TMPDIR` inside `orca/user-jailed`. The profile is
-  chosen once per macOS build and Orca version by Orca's own probe (`Orca --sandbox-probe -u
+  chosen once per macOS build and YG Dolphin version by YG Dolphin's own probe (`Orca --sandbox-probe -u
   <empty folder>`, no disc; kept in `orca/sandbox-mac.json`): strict when the probe passes under
   it, relaxed (every service by name) only when strict fails it, a refusal when neither passes.
   A probe that does not answer in 30 s (macOS holds a new program's first launch while it scans
-  it, minutes at times, and the probe is a new Orca's first launch) answers nothing: never relaxed
+  it, minutes at times, and the probe is a new YG Dolphin's first launch) answers nothing: never relaxed
   for it, not kept, that run plays strict and the next Play asks again. Never by a player's run: one that ends before its first line is refused, not tried again
   relaxed, so a crafted disc or setting cannot pick the relaxed profile. The manifest may still
-  choose a profile. The app reads Orca's memory (`footprint`) and stops it past 6 GB. Off until its
+  choose a profile. The app reads YG Dolphin's memory (`footprint`) and stops it past 6 GB. Off until its
   rollout, the manifest's `sandboxSwitch.mac.rollout: "on"` (off by default; not remembered past
   the manifest, so `"off"` turns it back off); the support file or a dated `mac.mode` turns it on
   for testers before that. The two folders the jail writes (its user folder and Metal's cache)
   must each be a folder itself, not a link, or the run is refused.
   **Metal's own shader cache** (`$(getconf DARWIN_USER_CACHE_DIR)co.yougame.orca`, one folder per
-  bundle id) holds one side at a time (`src/orca-metal-cache.ts`): while a jailed Orca or the probe
+  bundle id) holds one side at a time (`src/orca-metal-cache.ts`): while a jailed YG Dolphin or the probe
   runs, the jailed side's copy is moved in and the unjailed side's waits beside it
-  (`co.yougame.orca.yg-open`); when the last jailed Orca ends the jailed side goes back beside it
+  (`co.yougame.orca.yg-open`); when the last jailed YG Dolphin ends the jailed side goes back beside it
   (`co.yougame.orca.yg-jailed`). Which side the folder holds is in `orca/metal-cache.json`
   (missing or damaged counts as jailed), so a crash is put right at the next Play. A jailed and an
-  unjailed Orca never run at once on a Mac (`sandbox_busy`), and an unjailed Orca does not start
+  unjailed YG Dolphin never run at once on a Mac (`sandbox_busy`), and an unjailed YG Dolphin does not start
   while the jailed side can be neither moved nor deleted.
-  **Privacy grants:** macOS counts Orca as YouGame, so a jailed Orca shares YouGame's grants.
+  **Privacy grants:** macOS counts YG Dolphin as YouGame, so a jailed YG Dolphin shares YouGame's grants.
   Each jailed Play logs which ones YouGame holds, asked without a prompt (`src/orca-mac-tcc.ts`:
   `getMediaAccessStatus`, `isTrustedAccessibilityClient(false)`; never a request, never a setting).
   The line also names any grant the profile has no rule of its own for.
@@ -347,18 +350,18 @@ settings takes part in it.
 - **Jailed and unjailed runs never share a user folder.** Unjailed runs keep `orca/user`; jailed
   runs use `orca/user-jailed`, made at the first jailed Play from a copy of `orca/user` (folders
   and plain files only: no links, no caches or logs) and never copied back. So nothing a
-  taken-over Orca plants in its folder (a Wii SD image, the NAND, `GameSettings`, `Config`, a shader
-  cache) is ever parsed by an unjailed Orca, including the one that runs when a switch turns the
-  jail off. Help > Reset Orca files deletes `orca/user-jailed`, the disc checks' and probes'
+  taken-over YG Dolphin plants in its folder (a Wii SD image, the NAND, `GameSettings`, `Config`, a shader
+  cache) is ever parsed by an unjailed YG Dolphin, including the one that runs when a switch turns the
+  jail off. Help > Reset YG Dolphin files deletes `orca/user-jailed`, the disc checks' and probes'
   leftover folders, the Mac's probe answers, and both AppContainers' own storage (the launcher's
-  `--reset-profile`). The read entry on the player's disc file stays (it names only the Orca
+  `--reset-profile`). The read entry on the player's disc file stays (it names only the YG Dolphin
   container).
-- **The bridge**: on stdio (`YOUGAME_STDIO=1`), `yg {json}` lines (`src/orca-bridge.ts`). Orca may
+- **The bridge**: on stdio (`YOUGAME_STDIO=1`), `yg {json}` lines (`src/orca-bridge.ts`). YG Dolphin may
   ask for `hello`, `mpTicket` (rebuilt field by field, always casual, 20 a minute) and `mpRoom`
   (rebuilt, 16 KB at most, newest wins), nothing else; what it reads back of a refusal is plain
-  words, the details go to the log. Controller snapshots go down stdin, only the newest while Orca
-  is not reading, and never one after a newer one. Orca's output lines are capped at 64 KB. A
-  running Orca that says `orca alive` (about once a second, from its window's thread) and then not
+  words, the details go to the log. Controller snapshots go down stdin, only the newest while YG Dolphin
+  is not reading, and never one after a newer one. YG Dolphin's output lines are capped at 64 KB. A
+  running YG Dolphin that says `orca alive` (about once a second, from its window's thread) and then not
   again for 10 s is stopped; only that line counts, and the computer's sleep never does. Linux
   stays on the loopback bridge (stdio has never run there).
 - **The disc check** (`Orca --verify`) runs in its own `YouGame.OrcaVerify` profile with no
@@ -375,12 +378,12 @@ settings takes part in it.
   that cannot read the manifest decides as the last one did. **Never an automatic run without the
   jail**: a run the jail refused does not start and says one `[sandbox_*]` sentence with what to
   do (`sandbox_unsupported`: reinstall, or let `yougame-sandbox.exe` run in the antivirus;
-  `sandbox_disc`: copy the disc into a folder of the player's own; `sandbox_denied`: Reset Orca
+  `sandbox_disc`: copy the disc into a folder of the player's own; `sandbox_denied`: Reset YG Dolphin
   files; `sandbox_embed`: try again, then restart YouGame). Start and crash reports carry
   `sandbox` on or off and the peak memory, and the page hears `orca sandbox on <os>` or
   `orca sandbox off <rollout|manifest|support|dev|system|legacy>` every run.
 
-**What a taken-over Orca can still do** (the jail keeps it from the player's files, other programs,
+**What a taken-over YG Dolphin can still do** (the jail keeps it from the player's files, other programs,
 loopback and the clipboard; these it does not):
 
 - **Draw anywhere in the app's window, and on top of everything.** Its window is a child of the
@@ -390,15 +393,15 @@ loopback and the clipboard; these it does not):
 - **Read other windows' titles** (probe `wintitle`: a decoy window's title another process held was
   read from inside, 2026-10-10). A browser's title is its tab's page title, so this can show what
   the player has open. The job's `--ui-handles` (JOB_OBJECT_UILIMIT_HANDLES) may close it, but it
-  also cuts Orca off from the app's window it is adopted into; it is untried with the real Orca
+  also cuts YG Dolphin off from the app's window it is adopted into; it is untried with the real YG Dolphin
   (the W6 runs), as is `--lpac`.
 - Not tested yet, because those probes need Luis's yes: reading keys typed into the app's window
-  while Orca's is adopted (it shares the app window's input queue), and opening things through
+  while YG Dolphin's is adopted (it shares the app window's input queue), and opening things through
   Windows (`ms-settings:`, web links, COM).
-- **Act through the page with its status lines.** The app forwards Orca's `orca …` lines to the
+- **Act through the page with its status lines.** The app forwards YG Dolphin's `orca …` lines to the
   page, which acts on some of them as the player's own: `orca menu` and `orca queue` (start a
   ranked or casual search, ready up, skip an opponent, cancel), `orca controls` (save the name
-  tag's controls), `orca stats` (network telemetry). So a taken-over Orca can search ranked as the
+  tag's controls), `orca stats` (network telemetry). So a taken-over YG Dolphin can search ranked as the
   player and throw the set, record skips, change the saved controls, and post made-up telemetry;
   through `mpRoom` it can name any profile id in the lobby it shows. None of it reaches money,
   passwords or other accounts. Limiting `queue ready` and `skip` while jailed, or asking for the
@@ -418,8 +421,8 @@ cd desktop
 npm run build && npm run native:build
 node --test tests/sandbox-policy.test.cjs                          # policy, any OS
 node --test tests/orca-sandbox.test.cjs tests/orca-bridge.test.cjs tests/orca-mac-sandbox.test.cjs tests/sandbox-launcher.test.cjs tests/orca-user.test.cjs tests/orca-sandbox-fields.test.cjs
-node tests/orca-sandbox-containment.mjs                             # Windows, desktop session: Orca's grants, decoys, no keyboard probe
-node tests/orca-mac-containment.mjs                                 # macOS: Orca's profile, decoys
+node tests/orca-sandbox-containment.mjs                             # Windows, desktop session: YG Dolphin's grants, decoys, no keyboard probe
+node tests/orca-mac-containment.mjs                                 # macOS: YG Dolphin's profile, decoys
 node tests/sandbox-containment.mjs                                  # Windows: what the sandbox stops
 node tests/libretro-host.mjs <core.dll> <rom> 8 --sandbox           # host alone, sandboxed, frame read back
 node tests/electron-embed.mjs <mupen64plus_next_libretro.dll> <rom> # real shell: sandboxed, embedded, drawn, keyboard, save
