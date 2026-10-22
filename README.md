@@ -16,7 +16,7 @@ out, please report it privately: see
 | ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------- | ------------------------ |
 | Emulators in the app's window, incl. ROM hacks and disc games | Sandboxed, no network                                     | **Not yet** (planned: `sandbox-exec`)  | Not yet                  |
 | Native game builds, from any creator                          | Sandboxed; online unless YouGame turned it off             | Staff-only and signed until then       | Staff-only               |
-| YG Dolphin, our Dolphin fork, and the mods that run on it | Every mod is sandboxed (this launcher): internet only, no home network. YG Dolphin without a mod: sandboxed on the public beta, next in the released app | Sandboxed on the public beta (`sandbox-exec`, deny by default; it can't block the home network). Not yet in the released app | Not yet |
+| YG Dolphin, our Dolphin fork, and the mods that run on it | Every mod is sandboxed (this launcher), with internet access. YG Dolphin without a mod: sandboxed on the public beta, next in the released app | Sandboxed on the public beta (`sandbox-exec`, deny by default; it can't block the home network). Not yet in the released app | Not yet |
 | Browser games                                                 | Chromium's renderer sandbox                               | Chromium's renderer sandbox            | Chromium's renderer sandbox |
 
 Mods built by other players will only run on other players' machines once YG Dolphin runs sandboxed on
@@ -42,7 +42,7 @@ doesn't), so a driver or kernel bug is a way out.
 | Path                          | What it is                                                                                   |
 | ----------------------------- | -------------------------------------------------------------------------------------------- |
 | `native/sandbox/launcher.cpp` | `yougame-sandbox.exe`: starts one program inside an AppContainer and a job object              |
-| `native/sandbox/network.hpp`  | The home-network guard: Windows Filtering Platform rules, installed once with the player's OK, that block one sandbox profile from private and local addresses (for mods) |
+| `native/sandbox/network.hpp`  | The home-network guard: Windows Filtering Platform rules, installed once with the player's OK, that block one sandbox profile from private and local addresses (for mods). Not switched on yet |
 | `native/sandbox/probe.cpp`    | A stand-in for a compromised game, for the containment test. Never shipped                   |
 | `native/sandbox/steam-probe.c`, `test-fixtures/` | A stand-in game for the Steam helper opt-in test, and its fake Steam folder. Never shipped |
 | `native/tests/`               | The launcher's own Windows tests (CTest): window adoption and the helper-process ceiling     |
