@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "tsc -p . && node --test tests/sandbox-policy.test.cjs"
+    "test": "tsc -p . && node --test tests/sandbox-policy.test.cjs tests/native-launch.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

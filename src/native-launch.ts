@@ -13,8 +13,20 @@
 //     "memoryMb": 6144                                      // the sandbox's memory limit
 //   }
 //
+// A build that also reads a second disc the player owns names it under "discs" (only with an app
+// that advertises EXTRA_DISCS_UA_TOKEN) and places it with {disc:<name>}:
+//
+//   "args": ["--iso", "{disc}", "--brawl-disc", "{disc:brawl}"],
+//   "disc": true,
+//   "discs": { "brawl": { "system": "wii", "id": "RSBE01", "optional": true, "label": "Super Smash Bros. Brawl" } }
+//
+// An optional disc the player did not pick drops every arg that holds its placeholder, and the arg
+// just before it too when that one is a bare flag ("--brawl-disc": starts with "-", no "=", no
+// placeholder), so the program sees neither. A required one must be picked, like the base disc.
+//
 // The app fills the placeholders with paths it chose ({build}: the unpacked build, read-only;
-// {data}: the game's own folder, kept across updates; {disc}: the player's disc, read-only), so a
+// {data}: the game's own folder, kept across updates; {disc}: the player's disc, read-only; {disc:<name>}: one of its
+// extra discs, read-only), so a
 // build never names a path itself. Every Windows build runs inside the sandbox (sandbox-policy.ts),
 // one without a spec under DEFAULT_LAUNCH_SPEC, and talks to the app over its stdin and stdout
 // (bridge.ts StdioBridge), since a sandboxed process cannot reach the loopback bridge.
@@ -26,6 +38,8 @@ export const LAUNCH_SPEC_FILE = "yougame-native.json";
 export const DIRECT_UA_TOKEN = "YouGameDirect/1";
 /** Steam base specs remain inert until an app explicitly advertises support. */
 export const STEAM_BASE_UA_TOKEN = "YouGameSteamBase/1";
+/** Named extra discs ("discs", {disc:<name>}) remain unknown fields until an app advertises support. */
+export const EXTRA_DISCS_UA_TOKEN = "YouGameExtraDiscs/1";
 
 /**
  * How the sandbox runs a Windows build that ships no spec: no arguments, its own window, started in
@@ -110,12 +124,17 @@ export type LaunchSpec = {
   /** "yougame": the sandbox gives it no network, and the app opens YouGame-only connections for it (docs/NATIVE_NET.md). */
   net: "internet" | "yougame" | "none";
   direct?: true;
+  /** Further discs the player owns, by name (docs/DESKTOP_SANDBOX.md): each read-only, each placed by {disc:<name>}. */
+  discs?: Record<string, ExtraDisc>;
   memoryMb: number;
   /** The working directory: the data folder (every spec file), or the build's own folder (DEFAULT_LAUNCH_SPEC). */
   cwd?: "data" | "build";
 };
 
-const PLACEHOLDER = /\{([a-z]+)\}/g;
+export type ExtraDisc = { system: "gc" | "wii"; id: string; optional: boolean; label?: string };
+
+const PLACEHOLDER = /\{([a-z]+)(?::([a-z0-9_]{1,16}))?\}/g;
+const DISC_NAME = /^[a-z0-9_]{1,16}$/;
 const KNOWN = new Set(["build", "data", "disc", "base"]);
 const WINDOW_NAME = /^[A-Za-z0-9 ._-]{1,64}$/;
 
@@ -129,13 +148,13 @@ export function parseLaunchSpec(text: string, userAgent = ""): { spec: LaunchSpe
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: `${LAUNCH_SPEC_FILE} must be an object` };
   const o = raw as Record<string, unknown>;
-  for (const k of Object.keys(o)) if (!["version", "args", "disc", "embed", "controllers", "net", "memoryMb", ...(userAgent.split(/\s+/).includes(DIRECT_UA_TOKEN) ? ["direct"] : []), ...(userAgent.split(/\s+/).includes(STEAM_BASE_UA_TOKEN) ? ["base", "folders", "children"] : [])].includes(k)) return { error: `unknown field "${k}"` };
+  for (const k of Object.keys(o)) if (!["version", "args", "disc", "embed", "controllers", "net", "memoryMb", ...(userAgent.split(/\s+/).includes(DIRECT_UA_TOKEN) ? ["direct"] : []), ...(userAgent.split(/\s+/).includes(STEAM_BASE_UA_TOKEN) ? ["base", "folders", "children"] : []), ...(userAgent.split(/\s+/).includes(EXTRA_DISCS_UA_TOKEN) ? ["discs"] : [])].includes(k)) return { error: `unknown field "${k}"` };
   if (o.version !== 1) return { error: "version must be 1" };
   const args = o.args ?? [];
   if (!Array.isArray(args) || args.length > 64 || !args.every((a) => typeof a === "string" && a.length <= 1024 && !/[\0\r\n]/.test(a)))
     return { error: "args must be at most 64 strings of at most 1024 characters" };
   for (const a of args as string[]) {
-    for (const m of a.matchAll(PLACEHOLDER)) if (!KNOWN.has(m[1])) return { error: `unknown placeholder {${m[1]}}` };
+    for (const m of a.matchAll(PLACEHOLDER)) if (!KNOWN.has(m[1]) || (m[2] !== undefined && m[1] !== "disc")) return { error: `unknown placeholder ${m[0]}` };
     if (a.replace(PLACEHOLDER, "").includes("{")) return { error: `stray "{" in "${a}"` };
   }
   const disc = o.disc === true;
@@ -163,6 +182,26 @@ export function parseLaunchSpec(text: string, userAgent = ""): { spec: LaunchSpe
     base = { steam: b.steam, buildids, files, ...(b.name !== undefined ? { name: b.name as string } : {}), ...(b.hashes !== undefined ? { hashes: b.hashes as Record<string, string[]> } : {}) };
   }
   if (!base && (args as string[]).some((a) => a.includes("{base}"))) return { error: "{base} needs base" };
+  let discs: Record<string, ExtraDisc> | undefined;
+  if (o.discs !== undefined) {
+    if (!o.discs || typeof o.discs !== "object" || Array.isArray(o.discs) || Object.keys(o.discs).length < 1 || Object.keys(o.discs).length > 4)
+      return { error: "discs must be an object of 1 to 4 named discs" };
+    discs = {};
+    for (const [name, value] of Object.entries(o.discs as Record<string, unknown>)) {
+      if (!DISC_NAME.test(name)) return { error: `disc name "${name.slice(0, 32)}" must be 1 to 16 of a-z 0-9 _` };
+      if (name === "base") return { error: 'disc name "base" is reserved' };
+      const d = value as Record<string, unknown>;
+      if (!d || typeof d !== "object" || Array.isArray(d) || Object.keys(d).some((k) => !["system", "id", "optional", "label"].includes(k)))
+        return { error: `discs.${name} must be an object with system, id and optional` };
+      if (d.system !== "gc" && d.system !== "wii") return { error: `discs.${name}.system must be "gc" or "wii"` };
+      if (typeof d.id !== "string" || !/^[A-Z0-9]{6}$/.test(d.id)) return { error: `discs.${name}.id must be a 6-character game id (A-Z 0-9)` };
+      if (typeof d.optional !== "boolean") return { error: `discs.${name}.optional must be true or false` };
+      if (d.label !== undefined && (typeof d.label !== "string" || Array.from(d.label).length < 1 || Array.from(d.label).length > 80 || /[^\p{L}\p{M}\p{N}\p{P}\p{S} ]/u.test(d.label) || !d.label.trim()))
+        return { error: `discs.${name}.label must be 1 to 80 printable characters` };
+      discs[name] = { system: d.system, id: d.id, optional: d.optional, ...(d.label !== undefined ? { label: d.label as string } : {}) };
+    }
+  }
+  for (const a of args as string[]) for (const m of a.matchAll(PLACEHOLDER)) if (m[2] !== undefined && !discs?.[m[2]]) return { error: `{disc:${m[2]}} needs discs.${m[2]}` };
   if (o.folders !== undefined && (!Array.isArray(o.folders) || o.folders.length > 4 || !o.folders.every((folder) => typeof folder === "string" && /^(documents|localappdata)\/[A-Za-z0-9 ._-]{1,64}(\/[A-Za-z0-9 ._-]{1,64}){0,2}$/.test(folder) && folder.split("/").slice(1).every((part) => !part.includes("..") && part.trim() === part && !part.endsWith(".") && part !== "." && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(part)))))
     return { error: "folders must be at most 4 documents/ or localappdata/ paths with 1 to 3 plain segments" };
   if (o.children !== undefined && o.children !== 1 && o.children !== 2) return { error: "children must be an integer from 1 to 2" };
@@ -180,21 +219,39 @@ export function parseLaunchSpec(text: string, userAgent = ""): { spec: LaunchSpe
   if (o.direct === true && o.net !== "yougame") return { error: 'direct needs net "yougame"' };
   const memoryMb = o.memoryMb === undefined ? 4096 : o.memoryMb;
   if (typeof memoryMb !== "number" || !Number.isInteger(memoryMb) || memoryMb < 512 || memoryMb > 16384) return { error: "memoryMb must be a whole number from 512 to 16384" };
-  return { spec: { args: args as string[], disc, base, ...(o.folders !== undefined ? { folders: o.folders as string[] } : {}), ...(o.children !== undefined ? { children: o.children as 1 | 2 } : {}), embed, controllers: o.controllers === "mirror" ? "mirror" : "none", net: o.net === "internet" || o.net === "yougame" ? o.net : "none", ...(o.direct === true ? { direct: true } : {}), memoryMb } };
+  return { spec: { args: args as string[], disc, base, ...(o.folders !== undefined ? { folders: o.folders as string[] } : {}), ...(o.children !== undefined ? { children: o.children as 1 | 2 } : {}), embed, controllers: o.controllers === "mirror" ? "mirror" : "none", net: o.net === "internet" || o.net === "yougame" ? o.net : "none", ...(o.direct === true ? { direct: true } : {}), ...(discs ? { discs } : {}), memoryMb } };
 }
 
 /**
  * The program's arguments with the app's paths in place of the placeholders. A placeholder followed
  * by "/sub/path" names a file inside that folder; the slashes become `sep` (backslashes on Windows).
+ * `discs`: the player's extra discs by name, null (or absent) for one not picked. An optional disc
+ * not picked drops each arg holding {disc:<name>}, and the arg just before it when that is a bare
+ * flag (starts with "-", no "=", no placeholder); a required one not picked is an error.
  */
-export function launchArgs(spec: LaunchSpec, paths: { build: string; data: string; disc: string | null; base?: string | null }, sep: string = path.sep): string[] {
+export function launchArgs(spec: LaunchSpec, paths: { build: string; data: string; disc: string | null; base?: string | null; discs?: Record<string, string | null> }, sep: string = path.sep): string[] {
   if (spec.disc && !paths.disc) throw new Error("this game plays on your own disc: pick it first");
   if (spec.base && !paths.base) throw new Error("this game needs its Steam base: check it first");
-  return spec.args.map((a) => {
-    if (!a.includes("{")) return a;
-    const tail = sep === "/" ? (t: string) => t : (t: string) => t.replace(/\//g, sep);
-    return a.replace(/\{([a-z]+)\}([^{]*)/g, (_, k: string, rest: string) => (k === "build" ? paths.build : k === "data" ? paths.data : k === "base" ? (paths.base as string) : (paths.disc as string)) + tail(rest));
-  });
+  const picked = (name: string) => paths.discs?.[name] || null;
+  for (const [name, d] of Object.entries(spec.discs ?? {}))
+    if (!d.optional && !picked(name)) throw new Error(`this game also plays on your own ${d.label ?? name} disc: pick it first`);
+  const tail = sep === "/" ? (t: string) => t : (t: string) => t.replace(/\//g, sep);
+  const out: string[] = [];
+  let prevFlag = false;
+  for (const a of spec.args) {
+    if ([...a.matchAll(PLACEHOLDER)].some((m) => m[2] !== undefined && !picked(m[2]))) {
+      if (prevFlag) out.pop();
+      prevFlag = false;
+      continue;
+    }
+    prevFlag = a.startsWith("-") && !a.includes("=") && !a.includes("{");
+    if (!a.includes("{")) {
+      out.push(a);
+      continue;
+    }
+    out.push(a.replace(/\{([a-z]+)(?::([a-z0-9_]{1,16}))?\}([^{]*)/g, (_, k: string, name: string | undefined, rest: string) => (name !== undefined ? (picked(name) as string) : k === "build" ? paths.build : k === "data" ? paths.data : k === "base" ? (paths.base as string) : (paths.disc as string)) + tail(rest)));
+  }
+  return out;
 }
 
 /**
@@ -209,19 +266,21 @@ export function nativeDataName(gameId: string, testBuild?: string | null): strin
 }
 
 /**
- * The sandbox of a native build: its own folder read + execute, the disc read, its data folder its
+ * The sandbox of a native build: its own folder read + execute, the disc and its extra discs read, its data folder its
  * only writable place (and its working directory, where a crash dump lands, unless the spec says
  * "build": DEFAULT_LAUNCH_SPEC),
  * outbound internet when it asks (online play), none for `net: "yougame"` (the app's broker opens its
  * connections, docs/NATIVE_NET.md), the window adopted into the player box when it draws there.
  * One profile per listing, shared by every build of it, like its data folder.
  */
-export function nativeSandbox(o: { gameId: string; build: string; data: string; disc: string | null; spec: LaunchSpec; base?: string | null; folders?: string[]; parent?: string; env: Record<string, string> }): SandboxSpec {
+export function nativeSandbox(o: { gameId: string; build: string; data: string; disc: string | null; spec: LaunchSpec; base?: string | null; discs?: Record<string, string | null>; folders?: string[]; parent?: string; env: Record<string, string> }): SandboxSpec {
   return {
     profile: sandboxProfile(`native:${o.gameId}`),
     runtime: [],
     exec: [o.build, ...(o.base ? [o.base] : [])],
-    read: [...(o.disc ? [o.disc] : []), ...(o.base ? [o.base] : [])],
+    // Each extra disc the spec names and the player picked: the file alone, read-only, like the disc.
+    // A name the spec does not declare gets nothing, whatever the caller passes.
+    read: [...(o.disc ? [o.disc] : []), ...Object.keys(o.spec.discs ?? {}).flatMap((name) => (o.discs?.[name] ? [o.discs[name] as string] : [])), ...(o.base ? [o.base] : [])],
     write: [o.data, ...(o.folders ?? [])],
     net: sandboxNet(o.spec.net),
     maxMemoryMb: o.spec.memoryMb,

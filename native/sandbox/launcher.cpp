@@ -58,7 +58,7 @@
 //                                         ShellExecuteEx runas, wait, return its result (no shell)
 //
 // Grants: a folder must be at least two levels below a drive root, a file may sit in the root
-// itself (E:\Brawl.iso). Nothing on a network drive is granted (an AppContainer cannot open it
+// itself (E:\Brawl.iso; the same for each of a native spec's extra discs, one --read each). Nothing on a network drive is granted (an AppContainer cannot open it
 // anyway). On a drive without permissions (FAT32, exFAT) there is nothing to grant: the grant is
 // skipped and said, and the program opens the file as any program can.
 //
