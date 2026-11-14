@@ -32,7 +32,7 @@ export type SandboxSpec = {
   display?: string;
   /** Read + execute for every YouGame sandbox (the shared runtime capability): host program, cores. */
   runtime: string[];
-  /** Read for this profile only. */
+  /** Read for this profile only: each file alone (a disc image, a native spec's extra discs), never its folder. */
   read: string[];
   /** Read + execute for this profile only (a native build's own folder). */
   exec?: string[];

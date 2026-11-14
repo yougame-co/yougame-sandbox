@@ -102,6 +102,21 @@ The sandbox lowers the odds and the blast radius; it does not make a malicious g
   container storage. YG Dolphin, packs and emulator cores never request helpers. `--links-helper`
   launches reject the option before creating a profile or granting access;
   the direct-links helper's own check still requires `ActiveProcessLimit == 1` and no breakaway.
+- **Extra discs**: a launch spec may name further discs the player owns under `"discs"` only when
+  the app advertises the exact `YouGameExtraDiscs/1` capability (`unknown field "discs"` otherwise,
+  so an older app refuses the build rather than run it without the disc it expects). Example: a
+  native build of one disc's game that can also read a second disc:
+  `"args": ["--iso", "{disc}", "--brawl-disc", "{disc:brawl}"], "disc": true,
+  "discs": {"brawl": {"system": "wii", "id": "RSBE01", "optional": true, "label": "Super Smash Bros. Brawl"}}`.
+  Names are 1 to 16 of `a-z 0-9 _`, `base` is reserved, at most 4; each `{disc:<name>}` must be
+  declared. An optional disc the player did not pick drops every arg holding its placeholder, and
+  the arg just before it when that is a bare flag (starts with `-`, no `=`, no placeholder); a
+  required one not picked refuses the launch, like the base disc. Each picked disc gets the same
+  grant as the base disc: one `--read` on the file alone (never its folder), so the launcher's
+  rules apply unchanged (a file may sit in a drive root, nothing on a network drive, a drive
+  without ACLs is skipped and said). No execute, no write, no new network. A name the spec does
+  not declare is never granted. The spec only names a disc by system and game id: the app chooses
+  the file and must verify it (picker, id/hash check) before passing its path, as for the base disc.
 - **A minimal environment**: the system's own variables, `TEMP`/`APPDATA`/`USERPROFILE` pointed into
   the container's own folder (`%LOCALAPPDATA%\Packages\<profile>\AC`), nothing of the app's.
 - **Transport**: inherited pipes or handles only. Loopback HTTP (the native SDK bridge and the
